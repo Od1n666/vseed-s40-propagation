@@ -1,0 +1,264 @@
+# Example for Home Assistant packages: include via homeassistant.packages.
+# Adjust entity_ids to match your VSeed S40 installation.
+# Community experiment: not an official, validated propagation recipe.
+
+input_boolean:
+  vseed_steckling_automatik:
+    name: VSeed Steckling Automatik
+    icon: mdi:robot
+  vseed_steckling_phase_halten:
+    name: VSeed Steckling Phase halten
+    icon: mdi:pause-circle
+input_number:
+  vseed_steckling_pausentage:
+    name: VSeed Steckling Pausentage
+    min: 0
+    max: 365
+    step: 1
+    mode: box
+    icon: mdi:calendar-clock
+  vseed_steckling_hitzekorrektur:
+    name: VSeed Steckling Hitzekorrektur
+    min: 0
+    max: 10
+    step: 5
+    mode: box
+    unit_of_measurement: '%'
+    icon: mdi:thermometer-alert
+template:
+- sensor:
+  - name: VSeed Steckling Tag
+    unique_id: vseed_steckling_tag
+    icon: mdi:calendar-today
+    unit_of_measurement: d
+    state: "{% set d = states('input_datetime.vseed_stecklinge_startdatum') %} {% if d in ['unknown','unavailable','none','']\
+      \ %}\n  {{ none }}\n{% else %}\n  {% set start = as_datetime(d, none) %}\n  {% if start is none\
+      \ %}\n    {{ none }}\n  {% else %}\n    {% set pause = states('input_number.vseed_steckling_pausentage')\
+      \ | int(0) %}\n    {{ (now().date() - start.date()).days + 1 - pause }}\n  {% endif %}\n{% endif\
+      \ %}"
+  - name: VSeed Steckling Phase
+    unique_id: vseed_steckling_phase
+    icon: mdi:sprout
+    state: "{% set t = states('sensor.vseed_steckling_tag') | int(0) %} {% if t < 1 %}\n  Nicht gestartet\n\
+      {% elif t <= 4 %}\n  Etablierung\n{% elif t <= 10 %}\n  Bewurzelung\n{% elif t <= 14 %}\n  Abhärtung\n\
+      {% else %}\n  Abgeschlossen\n{% endif %}"
+  - name: VSeed Steckling Feuchteziel
+    unique_id: vseed_steckling_feuchteziel
+    unit_of_measurement: '%'
+    icon: mdi:water-percent
+    availability: '{{ states(''sensor.vseed_steckling_tag'') | is_number }}'
+    state: "{% set werte = [90,90,88,85,83,80,78,76,75,75,73,72,70,70] %} {% set t = states('sensor.vseed_steckling_tag')\
+      \ | int(1) %} {% set i = [[t - 1, 0] | max, 13] | min %} {% set n = [i + 1, 13] | min %} {% set\
+      \ progress = (now().hour * 60 + now().minute) / 1440 %} {% if is_state('input_boolean.vseed_steckling_phase_halten','on')\
+      \ %}\n  {% set progress = 0 %}\n{% endif %} {{ (werte[i] + (werte[n] - werte[i]) * progress) | round(0)\
+      \ }}"
+  - name: VSeed Steckling Wurzelziel
+    unique_id: vseed_steckling_wurzelziel
+    unit_of_measurement: °C
+    icon: mdi:thermometer-water
+    availability: '{{ states(''sensor.vseed_steckling_tag'') | is_number }}'
+    state: '{% set werte = [25,25,25,25,25,25,25,25,25,25,24.5,24,24,24] %} {% set t = states(''sensor.vseed_steckling_tag'')
+      | int(1) %} {% set i = [[t - 1, 0] | max, 13] | min %} {{ werte[i] }}'
+  - name: VSeed Steckling Lichtbasis
+    unique_id: vseed_steckling_lichtbasis
+    unit_of_measurement: '%'
+    icon: mdi:white-balance-sunny
+    availability: '{{ states(''sensor.vseed_steckling_tag'') | is_number }}'
+    state: '{% set werte = [50,50,50,50,55,55,60,60,65,65,70,75,80,80] %} {% set t = states(''sensor.vseed_steckling_tag'')
+      | int(1) %} {% set i = [[t - 1, 0] | max, 13] | min %} {{ werte[i] }}'
+  - name: VSeed Steckling Lichtziel
+    unique_id: vseed_steckling_lichtziel
+    unit_of_measurement: '%'
+    icon: mdi:brightness-percent
+    availability: '{{ is_number(states(''sensor.vseed_steckling_lichtbasis'')) }}'
+    state: '{% set basis = states(''sensor.vseed_steckling_lichtbasis'') | float(50) %} {% set korrektur
+      = states(''input_number.vseed_steckling_hitzekorrektur'') | float(0) %} {{ [basis - korrektur, 40]
+      | max | round(0) }}'
+script:
+  vseed_steckling_neustart:
+    alias: VSeed Steckling Neu starten
+    icon: mdi:restart
+    mode: single
+    sequence:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.vseed_steckling_pausentage
+      data:
+        value: 0
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.vseed_steckling_hitzekorrektur
+      data:
+        value: 0
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.vseed_steckling_phase_halten
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.vseed_stecklinge_startdatum
+      data:
+        date: '{{ now().strftime(''%Y-%m-%d'') }}'
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.vseed_steckling_automatik
+automation:
+- id: vseed_steckling_pausentage_zaehlen
+  alias: VSeed Steckling Pausentage zählen
+  mode: single
+  triggers:
+  - trigger: time
+    at: 00:00:10
+  conditions:
+  - condition: state
+    entity_id: input_boolean.vseed_steckling_phase_halten
+    state: 'on'
+  - condition: state
+    entity_id: input_boolean.vseed_steckling_automatik
+    state: 'on'
+  - condition: template
+    value_template: '{{ 1 <= states(''sensor.vseed_steckling_tag'') | int(0) <= 14 }}'
+  actions:
+  - action: input_number.increment
+    target:
+      entity_id: input_number.vseed_steckling_pausentage
+- id: vseed_steckling_startdatum_korrigieren
+  alias: VSeed Steckling Startdatum geändert
+  mode: restart
+  triggers:
+  - trigger: state
+    entity_id: input_datetime.vseed_stecklinge_startdatum
+  conditions:
+  - condition: template
+    value_template: "{{ trigger.from_state is not none and\n   trigger.to_state is not none and\n   trigger.from_state.state\
+      \ != trigger.to_state.state }}"
+  actions:
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.vseed_steckling_pausentage
+    data:
+      value: 0
+- id: vseed_steckling_hitzeschutz
+  alias: VSeed Steckling Dynamischer Hitzeschutz
+  mode: restart
+  triggers:
+  - trigger: time_pattern
+    minutes: /5
+  - trigger: homeassistant
+    event: start
+  - trigger: state
+    entity_id:
+    - input_boolean.vseed_steckling_automatik
+    - sensor.vseed_s40_lufttemperatur
+    for: 00:05:00
+  conditions:
+  - condition: state
+    entity_id: input_boolean.vseed_steckling_automatik
+    state: 'on'
+  - condition: template
+    value_template: '{{ 1 <= states(''sensor.vseed_steckling_tag'') | int(0) <= 14 }}'
+  actions:
+  - variables:
+      temp: '{{ states(''sensor.vseed_s40_lufttemperatur'') | float(-99) }}'
+      bisher: '{{ states(''input_number.vseed_steckling_hitzekorrektur'') | int(0) }}'
+      neu: "{% set t = states('sensor.vseed_s40_lufttemperatur') | float(-99) %} {% set k = states('input_number.vseed_steckling_hitzekorrektur')\
+        \ | int(0) %} {% if t == -99 %}\n  {{ k }}\n{% elif t >= 28.0 %}\n  10\n{% elif k >= 10 and t\
+        \ >= 27.5 %}\n  10\n{% elif t >= 27.0 %}\n  5\n{% elif k >= 5 and t >= 26.5 %}\n  5\n{% else %}\n\
+        \  0\n{% endif %}"
+  - condition: template
+    value_template: '{{ neu | int != bisher | int }}'
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.vseed_steckling_hitzekorrektur
+    data:
+      value: '{{ neu | int }}'
+- id: vseed_steckling_sollwerte_schreiben
+  alias: VSeed Steckling Sollwerte automatisch einstellen
+  mode: restart
+  triggers:
+  - trigger: time_pattern
+    minutes: /10
+  - trigger: homeassistant
+    event: start
+  - trigger: state
+    entity_id:
+    - sensor.vseed_steckling_tag
+    - sensor.vseed_steckling_feuchteziel
+    - sensor.vseed_steckling_wurzelziel
+    - sensor.vseed_steckling_lichtziel
+    - input_boolean.vseed_steckling_automatik
+  conditions:
+  - condition: state
+    entity_id: input_boolean.vseed_steckling_automatik
+    state: 'on'
+  - condition: template
+    value_template: '{{ 1 <= states(''sensor.vseed_steckling_tag'') | int(0) <= 14 }}'
+  - condition: template
+    value_template: "{{ states('select.vseed_s40_betrieb') not in\n   ['Aus','unknown','unavailable']\
+      \ }}"
+  - condition: template
+    value_template: "{{ 'Aussaat' in\n   (state_attr('select.vseed_s40_einstellphase','options') or [])\
+      \ }}"
+  - condition: template
+    value_template: "{{ is_number(states('sensor.vseed_steckling_feuchteziel')) and\n   is_number(states('sensor.vseed_steckling_wurzelziel'))\
+      \ and\n   is_number(states('sensor.vseed_steckling_lichtziel')) }}"
+  actions:
+  - action: select.select_option
+    target:
+      entity_id: select.vseed_s40_einstellphase
+    data:
+      option: Aussaat
+  - delay: 00:00:02
+  - variables:
+      feuchte: '{{ states(''sensor.vseed_steckling_feuchteziel'') | float }}'
+      wurzel: '{{ states(''sensor.vseed_steckling_wurzelziel'') | float }}'
+      licht: '{{ states(''sensor.vseed_steckling_lichtziel'') | float }}'
+      dauer: 18
+  - if:
+    - condition: template
+      value_template: "{{ is_number(states('number.vseed_s40_zielfeuchtigkeit')) and\n   (states('number.vseed_s40_zielfeuchtigkeit')\
+        \ | float -\n   feuchte | float) | abs >= 1 }}"
+    then:
+    - action: number.set_value
+      target:
+        entity_id: number.vseed_s40_zielfeuchtigkeit
+      data:
+        value: "{{ [[feuchte | float,\n    state_attr('number.vseed_s40_zielfeuchtigkeit','min') | float(0)]\
+          \ | max,\n    state_attr('number.vseed_s40_zielfeuchtigkeit','max') | float(100)] | min }}"
+  - if:
+    - condition: template
+      value_template: "{{ is_number(states('number.vseed_s40_zieltemperatur')) and\n   (states('number.vseed_s40_zieltemperatur')\
+        \ | float -\n   wurzel | float) | abs >= 0.5 }}"
+    then:
+    - action: number.set_value
+      target:
+        entity_id: number.vseed_s40_zieltemperatur
+      data:
+        value: "{{ [[wurzel | float,\n    state_attr('number.vseed_s40_zieltemperatur','min') | float(0)]\
+          \ | max,\n    state_attr('number.vseed_s40_zieltemperatur','max') | float(100)] | min }}"
+  - if:
+    - condition: template
+      value_template: "{{ is_number(states('number.vseed_s40_lichtintensitaet')) and\n   (states('number.vseed_s40_lichtintensitaet')\
+        \ | float -\n   licht | float) | abs >= 1 }}"
+    then:
+    - action: number.set_value
+      target:
+        entity_id: number.vseed_s40_lichtintensitaet
+      data:
+        value: "{{ [[licht | float,\n    state_attr('number.vseed_s40_lichtintensitaet','min') | float(0)]\
+          \ | max,\n    state_attr('number.vseed_s40_lichtintensitaet','max') | float(100)] | min }}"
+  - if:
+    - condition: template
+      value_template: "{{ is_number(states('number.vseed_s40_lichtdauer')) and\n   (states('number.vseed_s40_lichtdauer')\
+        \ | float -\n   dauer | float) | abs >= 0.5 }}"
+    then:
+    - action: number.set_value
+      target:
+        entity_id: number.vseed_s40_lichtdauer
+      data:
+        value: '{{ dauer }}'
+input_datetime:
+  vseed_stecklinge_startdatum:
+    name: VSeed Stecklinge Startdatum
+    has_date: true
+    has_time: false
+    icon: mdi:calendar-start
